@@ -1,26 +1,66 @@
 @import "tailwindcss";
 
 :root {
+  /* Default Next.js Base Setup Tokens */
   --background: #ffffff;
   --foreground: #171717;
-}
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  /* Shri Prasadam Premium Token Palette */
+  --brand-deep: #003354;       /* Premium Deep Navy Blue */
+  --brand-primary: #02446E;    /* Active Primary Actions */
+  --brand-lightBg: #F4F7FC;    /* Clean Layout Background */
+  --brand-accent: #0070BA;     /* WhatsApp Status Highlight Blues */
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
     --background: #0a0a0a;
     --foreground: #ededed;
+    
+    /* Optional: Fine-tune brand tones for dark mode if desired */
+    --brand-lightBg: #0f172a;  /* Dark Slate for workspace background */
   }
 }
 
+/* Tailwind v4 Native @theme Engine Extension Block */
+@theme {
+  /* Binding core tokens */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+
+  /* Injecting Shri Prasadam Premium Extended Tokens */
+  --color-brand-deep: var(--brand-deep);
+  --color-brand-primary: var(--brand-primary);
+  --color-brand-lightBg: var(--brand-lightBg);
+  --color-brand-accent: var(--brand-accent);
+
+  /* Registering 'Poppins' as a custom typography variable flag utility class */
+  --font-poppins: var(--font-poppins), sans-serif;
+}
+
+/* Global Document Layout Root Settings Override Base Layers */
 body {
-  background: var(--background);
+  background: var(--brand-lightBg);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-poppins), Arial, Helvetica, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Premium Workspace Scrollbars custom mechanics layout mapping */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--brand-lightBg);
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
 }
