@@ -12,6 +12,10 @@
   --brand-accent: #0070BA;     /* WhatsApp Status Highlight Blues */
 }
 
+button{
+  cursor: pointer;
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     --background: #0a0a0a;
