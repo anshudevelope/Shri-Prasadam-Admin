@@ -1,13 +1,19 @@
-import { MongoClient } from "mongodb";
+import { MongoClient, MongoClientOptions } from "mongodb";
 
-const uri = process.env.MONGODB_URI || "mongodb://localhost:27017/shri_prasadam";
-const options = {};
+const uri = process.env.MONGODB_URI || "";
 
-let client;
+// Add "as const" or explicitly type options with MongoClientOptions
+const options: MongoClientOptions = {
+  tls: true,
+  retryWrites: true,
+  w: "majority",
+};
+
+let client: MongoClient;
 let clientPromise: Promise<MongoClient>;
 
 if (!process.env.MONGODB_URI) {
-  console.warn("Please add your MONGODB_URI to .env.local for live database access");
+  throw new Error("Please add your Mongo URI to .env");
 }
 
 if (process.env.NODE_ENV === "development") {

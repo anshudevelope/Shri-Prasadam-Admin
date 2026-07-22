@@ -1,197 +1,226 @@
-// import { NextResponse } from "next/server";
-// import clientPromise from "@/app/lib/mongodb";
-
-// export async function POST(request: Request) {
-//   try {
-//     const { campaignName, message, recipients } = await request.json();
-
-//     if (!campaignName || !message || !recipients || !Array.isArray(recipients)) {
-//       return NextResponse.json({ error: "Missing required parameters" }, { status: 400 });
-//     }
-    
-//     // Fall back to environment variable values correctly
-//     const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
-//     const PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID;
-
-//     if (!WHATSAPP_TOKEN || !PHONE_NUMBER_ID) {
-//       console.error("Meta credentials missing from process.env configurations");
-//       return NextResponse.json({ error: "Server credential missing setup configuration" }, { status: 500 });
-//     }
-
-//     console.log(`Starting campaign pipeline execution via Meta Framework: ${campaignName}`);
-
-//     // Clean number string formatting (Ensure no +, whitespace, or dashes)
-//     const targetRecipient = recipients[0].replace(/[\s\+\-]/g, "");
-
-//     // NOTE: Because you are on a development sandbox / test number environment, 
-//     // sending a raw text body message to an inactive conversation will get blocked by Meta.
-//     // For testing, change the body object payload below to match your Meta template if needed.
-//     const metaPayload = {
-//       messaging_product: "whatsapp",
-//       to: targetRecipient,
-//       // type: "text",
-//       text: { body: message },
-//       // USE TEMPLATE IF INITIATING FREE COLD MESSAGES VIA TEST NUMBER:
-//       type: "template",
-//       template: {
-//         name: "hello_world",
-//         language: { code: "en_US" }
-//       }
-    
-//     };
-
-//     // Concrete execution mapping targeting Meta Cloud Graph API Layer
-//     const metaResponse = await fetch(`https://graph.facebook.com/v18.0/${PHONE_NUMBER_ID}/messages`, {
-//       method: 'POST',
-//       headers: {
-//         'Authorization': `Bearer ${WHATSAPP_TOKEN}`,
-//         'Content-Type': 'application/json'
-//       },
-//       body: JSON.stringify(metaPayload)
-//     });
-
-//     const metaData = await metaResponse.json();
-
-//     // CRITICAL FIX: Intercept Meta API response block status check failure logs 
-//     if (!metaResponse.ok) {
-//       console.error("Meta API Rejected Payload Delivery Attempt Details:", metaData);
-//       return NextResponse.json({ 
-//         success: false, 
-//         error: metaData.error?.message || "Meta API target verification rejected batch request transmission",
-//         metaDetails: metaData.error 
-//       }, { status: metaResponse.status });
-//     }
-
-//     // 2. Persistent Storage Logging via MongoDB Connection Driver
-//     const client = await clientPromise;
-//     const db = client.db("shri_prasadam");
-    
-//     const operationReceipt = await db.collection("whatsapp_campaigns").insertOne({
-//       campaignName,
-//       message,
-//       recipientCount: recipients.length,
-//       metaMessageId: metaData.messages?.[0]?.id || null,
-//       dispatchedAt: new Date(),
-//       deliveryStatus: "Delivered_To_Recipient_Gateway",
-//     });
-
-//     return NextResponse.json({
-//       success: true,
-//       message: "Campaign completed and logged cleanly.",
-//       metaResponseId: metaData.messages?.[0]?.id,
-//       id: operationReceipt.insertedId
-//     });
-
-//   } catch (error: any) {
-//     console.error("Critical API routing pipeline exception caught:", error);
-//     return NextResponse.json({ error: "Internal Server Processing Error" }, { status: 500 });
-//   }
-// }
-
 import { NextResponse } from "next/server";
 import clientPromise from "@/app/lib/mongodb";
 
+type RecipientItem = string | { phone: string; name?: string };
+
 export async function POST(request: Request) {
   try {
-    const { campaignName, message, recipients, mediaUrl, mediaType } = await request.json();
+    const { campaignName, templateName, message, recipients, mediaUrl, mediaType, languageCode } = await request.json();
 
-    if (!campaignName || !message || !recipients || !Array.isArray(recipients)) {
-      return NextResponse.json({ error: "Missing required campaign parameters" }, { status: 400 });
+    if (!campaignName || !message || !recipients || !Array.isArray(recipients) || recipients.length === 0) {
+      return NextResponse.json({ error: "Missing required campaign parameters or recipient list." }, { status: 400 });
     }
-    
+
     const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
     const PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID;
 
     if (!WHATSAPP_TOKEN || !PHONE_NUMBER_ID) {
-      return NextResponse.json({ error: "Missing credentials inside server environments." }, { status: 500 });
+      return NextResponse.json({ error: "Missing credentials inside server environment." }, { status: 500 });
     }
 
-    console.log(`Dispatched Campaign Strategy: ${campaignName} to ${recipients.length} recipients`);
+    const normalizedRecipients = recipients
+      .map((item: RecipientItem) => {
+        if (typeof item === "string") {
+          return {
+            phone: item.replace(/[\s\+\-]/g, "").trim(),
+            name: "Customer",
+          };
+        }
+        return {
+          phone: item.phone ? item.phone.replace(/[\s\+\-]/g, "").trim() : "",
+          name: item.name || "Customer",
+        };
+      })
+      .filter((r) => r.phone.length >= 10);
 
-    // We process recipient payloads. For testing sandbox accounts, we only process the first item.
-    // In live production contexts with payment setup, replace with parallel/loop execution.
-    const targetRecipient = recipients[0].replace(/[\s\+\-]/g, "");
+    const formattedMessage = message
+      .replace(/<b>(.*?)<\/b>/gi, "*$1*")
+      .replace(/<strong>(.*?)<\/strong>/gi, "*$1*")
+      .replace(/<i>(.*?)<\/i>/gi, "_$1_")
+      .replace(/<em>(.*?)<\/em>/gi, "_$1_")
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<\/p>/gi, "\n\n")
+      .replace(/<[^>]+>/g, "");
 
-    // Prepare media components array if custom media from Cloudinary exists
-    const components: any[] = [];
+    const results: Array<{ phone: string; status: string; id?: string; error?: any }> = [];
+    const activeTemplateName = templateName || "shri_prasadam_promo";
     
-    if (mediaUrl) {
-      const parameter: any = {};
-      if (mediaType === "image") parameter.image = { link: mediaUrl };
-      else if (mediaType === "video") parameter.video = { link: mediaUrl };
-      else if (mediaType === "document") parameter.document = { link: mediaUrl, filename: "Attachment" };
+    // Default to "en" for standard English templates created via Manager portal
+    let targetLangCode = languageCode || "en";
+
+    for (const recipient of normalizedRecipients) {
+      const recipientPhone = recipient.phone;
+      const recipientName = recipient.name;
+
+      const components: any[] = [];
+
+      if (mediaUrl && mediaType) {
+        const headerParam: any = { type: mediaType };
+        if (mediaType === "image") headerParam.image = { link: mediaUrl };
+        else if (mediaType === "video") headerParam.video = { link: mediaUrl };
+        else if (mediaType === "document") headerParam.document = { link: mediaUrl, filename: "Attachment" };
+
+        components.push({
+          type: "header",
+          parameters: [headerParam],
+        });
+      }
 
       components.push({
-        type: "header",
-        parameters: [parameter]
+        type: "body",
+        parameters: [
+          { type: "text", text: recipientName },
+          { type: "text", text: formattedMessage },
+        ],
       });
-    }
 
-    // Bind parameters for message variables (e.g. {{1}} = Customer Name)
-    components.push({
-      type: "body",
-      parameters: [
-        { type: "text", text: "Customer" }, // Default variable replacement map
-        { type: "text", text: message }
-      ]
-    });
+      const buildMetaPayload = (lang: string) => ({
+        messaging_product: "whatsapp",
+        to: recipientPhone,
+        type: "template",
+        template: {
+          name: activeTemplateName,
+          language: { code: lang },
+          components: components,
+        },
+      });
 
-    // Production Meta Payload Setup
-    const metaPayload = {
-      messaging_product: "whatsapp",
-      to: targetRecipient,
-      type: "template",
-      template: {
-        name: "shri_prasadam_promo", // Point directly to your approved Meta Template name
-        language: { code: "en" },
-        components: components
+      try {
+        let metaResponse = await fetch(`https://graph.facebook.com/v18.0/${PHONE_NUMBER_ID}/messages`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${WHATSAPP_TOKEN}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(buildMetaPayload(targetLangCode)),
+          cache: "no-store",
+        });
+
+        let metaData = await metaResponse.json();
+
+        // Fallback check if language code mismatched (132001)
+        if (!metaResponse.ok && metaData.error?.code === 132001) {
+          const fallbackLang = targetLangCode === "en" ? "en_US" : "en";
+          
+          metaResponse = await fetch(`https://graph.facebook.com/v18.0/${PHONE_NUMBER_ID}/messages`, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${WHATSAPP_TOKEN}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(buildMetaPayload(fallbackLang)),
+            cache: "no-store",
+          });
+
+          metaData = await metaResponse.json();
+        }
+
+        if (metaResponse.ok) {
+          results.push({ phone: recipientPhone, status: "SUCCESS", id: metaData.messages?.[0]?.id });
+        } else {
+          console.error(`Failed delivery for ${recipientPhone}:`, metaData);
+          results.push({ phone: recipientPhone, status: "FAILED", error: metaData.error?.message || "Meta API rejection" });
+        }
+      } catch (err: any) {
+        results.push({ phone: recipientPhone, status: "ERROR", error: err.message });
       }
-    };
-
-    const metaResponse = await fetch(`https://graph.facebook.com/v18.0/${PHONE_NUMBER_ID}/messages`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${WHATSAPP_TOKEN}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(metaPayload)
-    });
-
-    const metaData = await metaResponse.json();
-
-    if (!metaResponse.ok) {
-      console.error("Meta API Verification Rejected Delivery Attempt:", metaData);
-      return NextResponse.json({ 
-        success: false, 
-        error: metaData.error?.message || "Meta Server rejected this delivery layout configurations.",
-        metaDetails: metaData.error 
-      }, { status: metaResponse.status });
     }
 
-    // Database logging via MongoDB Engine
-    const client = await clientPromise;
-    const db = client.db("shri_prasadam");
-    
-    const operationReceipt = await db.collection("whatsapp_campaigns").insertOne({
-      campaignName,
-      message,
-      recipientCount: recipients.length,
-      metaMessageId: metaData.messages?.[0]?.id || null,
-      mediaUrl,
-      mediaType,
-      dispatchedAt: new Date(),
-      deliveryStatus: "Dispatched_From_NextJS_Server",
-    });
+    const successCount = results.filter((r) => r.status === "SUCCESS").length;
+    const failureCount = results.length - successCount;
+
+    try {
+      const client = await clientPromise;
+      const db = client.db("shri_prasadam");
+
+      await db.collection("whatsapp_campaigns").insertOne({
+        campaignName,
+        templateName: activeTemplateName,
+        message,
+        totalRecipients: recipients.length,
+        successCount,
+        failureCount,
+        mediaUrl: mediaUrl || null,
+        mediaType: mediaType || null,
+        dispatchedAt: new Date(),
+        deliveryStatus: successCount > 0 ? "Completed" : "Failed",
+        dispatchResults: results,
+      });
+    } catch (dbErr) {
+      console.error("MongoDB Logging Error:", dbErr);
+    }
+
+    if (successCount === 0) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: results[0]?.error || "Failed to dispatch messages to Meta Cloud API.",
+          details: results,
+        },
+        { status: 400 }
+      );
+    }
 
     return NextResponse.json({
       success: true,
-      message: "Production campaign dispatched cleanly.",
-      metaResponseId: metaData.messages?.[0]?.id,
-      id: operationReceipt.insertedId
+      message: `Campaign executed successfully. Sent to ${successCount} recipient(s).`,
+      successCount,
+      failureCount,
+      details: results,
     });
-
   } catch (error: any) {
     console.error("Critical routing Exception Caught:", error);
     return NextResponse.json({ error: "Internal Server Processing Error" }, { status: 500 });
+  }
+}
+
+export async function GET() {
+  try {
+    const client = await clientPromise;
+    const db = client.db("shri_prasadam");
+
+    const campaigns = await db
+      .collection("whatsapp_campaigns")
+      .find({})
+      .sort({ dispatchedAt: -1 })
+      .toArray();
+
+    // Aggregate key metrics
+    const totalCampaigns = campaigns.length;
+    const totalDispatched = campaigns.reduce((acc, c) => acc + (c.totalRecipients || 0), 0);
+    const totalSuccessful = campaigns.reduce((acc, c) => acc + (c.successCount || 0), 0);
+    const totalFailed = campaigns.reduce((acc, c) => acc + (c.failureCount || 0), 0);
+
+    const deliveryRate = totalDispatched > 0 
+      ? ((totalSuccessful / totalDispatched) * 100).toFixed(1) 
+      : "0.0";
+
+    return NextResponse.json({
+      success: true,
+      stats: {
+        totalCampaigns,
+        totalDispatched,
+        totalSuccessful,
+        totalFailed,
+        deliveryRate: `${deliveryRate}%`,
+      },
+      campaigns: campaigns.map((c) => ({
+        _id: c._id.toString(),
+        campaignName: c.campaignName,
+        templateName: c.templateName,
+        message: c.message,
+        totalRecipients: c.totalRecipients || 0,
+        successCount: c.successCount || 0,
+        failureCount: c.failureCount || 0,
+        mediaUrl: c.mediaUrl || null,
+        mediaType: c.mediaType || null,
+        dispatchedAt: c.dispatchedAt,
+        deliveryStatus: c.deliveryStatus || "Completed",
+        dispatchResults: c.dispatchResults || [],
+      })),
+    });
+  } catch (error: any) {
+    console.error("Failed to fetch campaigns history:", error);
+    return NextResponse.json({ error: "Database retrieval failed" }, { status: 500 });
   }
 }

@@ -1,5 +1,4 @@
 "use client";
-import React from "react";
 import DashboardLayout from "@/components/DashboardLayout";
 import { TrendingUp, CheckCircle, MousePointer, Radio, Plus, MessageSquare, Mail, AlertTriangle } from "lucide-react";
 
